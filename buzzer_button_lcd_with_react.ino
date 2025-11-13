@@ -18,7 +18,7 @@ const char* AP_SSID = "ALARM-SETUP";
 const char* AP_PASS = "12345678";
 
 //==================== BACKEND EXPRESS ====================
-const char* BACKEND_BASE = "https://api.elora.rdh-tech.my.id";
+const char* BACKEND_BASE = "https://tes.com";
 const char* DEVICE_ID    = "elora-emergency-alarm";
 
 //==================== PIN & LCD ======================
