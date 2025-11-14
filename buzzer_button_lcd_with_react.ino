@@ -10,15 +10,15 @@
 #include <WiFiClientSecureBearSSL.h>
 
 //==================== KONFIG WIFI ====================
-const char* WIFI_SSID = "wifi_name";
-const char* WIFI_PASS = "12345678";
+const char* WIFI_SSID = "rdh-tech";
+const char* WIFI_PASS = "rdh-tech";
 const uint16_t HTTP_PORT = 80;
 
 const char* AP_SSID = "ALARM-SETUP";
 const char* AP_PASS = "12345678";
 
 //==================== BACKEND EXPRESS ====================
-const char* BACKEND_BASE = "https://tes.com";
+const char* BACKEND_BASE = "https://test.my.id";
 const char* DEVICE_ID    = "elora-emergency-alarm";
 
 //==================== PIN & LCD ======================
@@ -38,31 +38,21 @@ const unsigned long BLINK_INTERVAL_MS_ALARM = 300;
 const unsigned long BLINK_INTERVAL_MS_OFF   = 250;
 int offBlinkPairsRemaining = 0;
 
-//==================== SIRENE BARU (WAILING EMERGENCY) ====================
-// Pola: frekuensi naik dari TONE_MIN ke TONE_MAX, turun lagi,
-// beberapa kali, lalu jeda singkat (diam), diulang.
+//==================== SIRENE (DISAMAKAN DENGAN SKETCH PERTAMA) ====================
+// Sirene naik–turun seperti kode yang SUDAH bagus
 unsigned long lastToneStepMs = 0;
-const unsigned long TONE_STEP_MS = 10;     // langkah lebih cepat untuk rasa "urgent"
-int toneFreq  = 900;
-int toneStep  = 40;
+const unsigned long TONE_STEP_MS = 20;   // sama persis
+int toneFreq  = 800;                     // awal
+int toneStep  = 20;
 const int TONE_MIN = 800;
-const int TONE_MAX = 2300;
-
-// jeda singkat antar "wail"
-bool sirenSilent = false;
-unsigned long sirenSilenceStartMs = 0;
-const unsigned long SIREN_SILENCE_MS = 150;
-
-// berapa kali menyentuh batas MIN/MAX sebelum jeda
-int sirenCycles = 0;
-const int SIREN_CYCLES_BEFORE_SILENCE = 4;
+const int TONE_MAX = 2000;
 
 // Address terakhir untuk ditampilkan saat ON
 String lastAddress = "";
 
-// Polling command dari backend
+// Polling command dari backend (hanya saat alarm OFF)
 unsigned long lastCmdCheckMs = 0;
-const unsigned long CMD_POLL_INTERVAL_MS = 1000;  // 1 detik
+const unsigned long CMD_POLL_INTERVAL_MS = 3000;
 
 //==================== HTTP SERVER LOKAL ====================
 ESP8266WebServer server(HTTP_PORT);
@@ -189,6 +179,7 @@ void stopAlarmStart3Blinks();   // forward declare
 
 void checkCommandFromBackend() {
   if (WiFi.status() != WL_CONNECTED) return;
+  if (alarmActive) return;   // JANGAN poll kalau alarm lagi ON
 
   unsigned long now = millis();
   if (now - lastCmdCheckMs < CMD_POLL_INTERVAL_MS) return;
@@ -240,11 +231,9 @@ void startAlarm() {
   // Tampilkan "Butuh Bantuan" + address
   displayHelpAddress(lastAddress);
 
-  // Reset sirene baru
+  // Mulai sirene: set awal PERSIS seperti sketch pertama
   toneFreq = TONE_MIN;
-  toneStep = 40;
-  sirenCycles = 0;
-  sirenSilent = false;
+  toneStep = abs(toneStep);
   lastToneStepMs = millis();
   tone(BUZZER_PIN, toneFreq);
 
@@ -259,14 +248,10 @@ void startAlarm() {
 }
 
 void stopAlarmStart3Blinks() {
-  if (!alarmActive) return;  // kalau sudah OFF, jangan ngapa-ngapain
+  if (!alarmActive && offBlinkPairsRemaining == 0) return;  // sudah betul-betul OFF
 
   alarmActive = false;
   noTone(BUZZER_PIN);
-
-  // reset state sirene
-  sirenSilent = false;
-  sirenCycles = 0;
 
   // kosongkan LCD (tanpa tulisan)
   displaySafeDone();
@@ -314,54 +299,25 @@ void handleBlink() {
   }
 }
 
-//==================== SIREN HANDLER BARU ====================
+//==================== SIREN HANDLER (PERSIS LOGIKA SKETCH PERTAMA) ====================
 void handleSiren() {
-  // jika alarm mati, pastikan buzzer off dan state sirene direset
-  if (!alarmActive) {
-    noTone(BUZZER_PIN);
-    sirenSilent = false;
-    sirenCycles = 0;
-    return;
-  }
+  if (!alarmActive) return;
 
   unsigned long now = millis();
+  if (now - lastToneStepMs >= TONE_STEP_MS) {
+    lastToneStepMs = now;
 
-  // fase jeda (diam sebentar antara wail)
-  if (sirenSilent) {
-    if (now - sirenSilenceStartMs >= SIREN_SILENCE_MS) {
-      sirenSilent = false;
-      toneFreq = TONE_MIN;
-      toneStep = abs(toneStep);   // mulai naik lagi dari bawah
-      lastToneStepMs = now;
-      tone(BUZZER_PIN, toneFreq);
+    toneFreq += toneStep;
+
+    if (toneFreq >= TONE_MAX) {
+      toneFreq = TONE_MAX;
+      toneStep = -toneStep;
     }
-    return;
-  }
+    if (toneFreq <= TONE_MIN) {
+      toneFreq = TONE_MIN;
+      toneStep = -toneStep;
+    }
 
-  // update frekuensi wail
-  if (now - lastToneStepMs < TONE_STEP_MS) return;
-  lastToneStepMs = now;
-
-  toneFreq += toneStep;
-
-  // kalau menyentuh batas atas/bawah, balik arah dan hitung siklus
-  if (toneFreq >= TONE_MAX) {
-    toneFreq = TONE_MAX;
-    toneStep = -toneStep;
-    sirenCycles++;
-  } else if (toneFreq <= TONE_MIN) {
-    toneFreq = TONE_MIN;
-    toneStep = -toneStep;
-    sirenCycles++;
-  }
-
-  // setelah beberapa kali naik–turun, jeda dulu sebentar
-  if (sirenCycles >= SIREN_CYCLES_BEFORE_SILENCE) {
-    noTone(BUZZER_PIN);
-    sirenSilent = true;
-    sirenSilenceStartMs = now;
-    sirenCycles = 0;
-  } else {
     tone(BUZZER_PIN, toneFreq);
   }
 }
@@ -507,6 +463,11 @@ void loop() {
 
   handleBlink();
   handleSiren();
-  checkCommandFromBackend();
+
+  // Poll command backend HANYA kalau alarm lagi OFF
+  if (!alarmActive) {
+    checkCommandFromBackend();
+  }
+
   MDNS.update();
 }
